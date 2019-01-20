@@ -67,16 +67,28 @@ class PLASMAToken
   end
 
   def read_start_withdraw_block_height
+    @start_withdraw_block_height ||= CKB::CellField.new(@source, @index, CKB::CellField::DATA).read(16, 8).unpack("Q<")[0]
   end
 
   def read_status
+    @status ||= CKB::CellField.new(@source, @index, CKB::CellField::DATA).read(8, 8).unpack("Q<")[0]
+    case @status
+    when 0
+      :deposit
+    when 1
+      :withdraw
+    else
+      raise "unknown status"
+    end
   end
 
   def verify_proof(proof)
+    #NOTE empty implementation
     true
   end
 
   def verify_signature(signature)
+    #NOTE empty implementation
     true
   end
 end
@@ -260,9 +272,6 @@ def verify_withdraw!
   c = PLASMAToken.new(CKB::Source::INPUT, 0)
   if c.read_type_hash != contract_type_hash
     raise "Inputs type must equals to contract_type_hash"
-  end
-  if c.read_lock_hash != contract_type_hash
-    raise "Inputs lock must equals to contract_type_hash"
   end
   if c.read_status != :withdraw
     raise "withdraw inputs must be withdraw status"
