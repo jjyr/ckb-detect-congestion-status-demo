@@ -1,0 +1,11 @@
+digraph {
+  label="Withdraw";
+  withdraw[shape="diamond", style=""];
+
+  withdrawing_plasma_token -> withdraw[label="100"];
+  deposited_UDT -> withdraw[label="100"];
+  signature -> withdraw;
+  withdraw -> UDT[label="100"];
+}
+
+

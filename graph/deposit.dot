@@ -1,0 +1,8 @@
+digraph {
+  label="Deposit";
+  deposit[shape="diamond", style=""];
+
+  input_UDT -> deposit[label="100"];
+  deposit -> deposited_UDT[label="100"];
+  deposit -> deposited_plasma_token[label="100"];
+}

@@ -1,0 +1,10 @@
+digraph {
+  label="Challenge";
+  challenge[shape="diamond", style=""];
+
+  withdrawing_plasma_token -> challenge[label="100"];
+  proof -> challenge;
+  challenge -> challenger_withdrawing_plasma_token[label="100"];
+  challenge -> challenger_identify_signature;
+}
+

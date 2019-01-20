@@ -1,0 +1,8 @@
+digraph {
+  label="Start withdraw";
+  start_withdraw[shape="diamond", style=""];
+
+  deposited_plasma_token -> start_withdraw[label="100"];
+  start_withdraw -> withdrawing_plasma_token[label="100"];
+  start_withdraw -> identify_signature;
+}
