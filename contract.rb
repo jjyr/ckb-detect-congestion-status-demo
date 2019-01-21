@@ -164,7 +164,10 @@ def verify_deposit!
       udt_outputs << i
       deposit_udt_count += UDT.new(CKB::Source::OUTPUT, i).read_token_count
     elsif output_type_hash == contract_type_hash
-      verify_plasma_token_status!(CKB::Source::OUTPUT, i, :deposit)
+      c = PLASMAToken.new(CKB::Source::INPUT, i)
+      if c.read_status != :deposit
+        raise "deposit outputs must be deposit status"
+      end
       ptoken_outputs << i
       ptoken_count += PLASMAToken.new(CKB::Source::OUTPUT, i).read_token_count
     else
