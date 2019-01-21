@@ -13,7 +13,10 @@ if ARGV.length < 2
 end
 
 # 100 block
-CHALLENGE_PERIOD = 100
+BASE_CHALLENGE_PERIOD = 100
+
+# BLOCK max cycles by consensus
+BLOCK_MAX_CYCLES = 100000000
 
 # arguments
 def udt_type_hash
@@ -27,6 +30,35 @@ end
 # PLASMA token should be this type
 def contract_type_hash
   $contract_type_hash ||= CKB.load_script_hash(0, CKB::Source::CURRENT, CKB::Category::TYPE)
+end
+
+def current_block_height
+  $current_block_height ||= CKB.load_ancestor_block_info(0)['number'] + 1
+end
+
+def is_chain_congestion?(start_block_height, end_block_height)
+  blocks = (start_block_height..end_block_height).map do |i| 
+    CKB.load_ancestor_block_info(current_block_height - i)
+  end
+  # return false because we lost block info
+  if blocks[0].nil?
+    false
+  end
+  consider_full_cycles = BLOCK_MAX_CYCLES * 0.95
+  blocks.all? do |block|
+    block["txs_cycles"].to_i > consider_full_cycles
+  end
+end
+
+# dynamic determine challenge period based on chain congestion status
+def tolerant_challenge_period(start_block_height)
+  challenge_end_block_height = start_block_height + BASE_CHALLENGE_PERIOD
+  while is_chain_congestion?(start_block_height, challenge_end_block_height) &&
+      current_block_height >= challenge_end_block_height
+    challenge_end_block_height += BASE_CHALLENGE_PERIOD
+    start_block_height += BASE_CHALLENGE_PERIOD
+  end
+  challenge_end_block_height
 end
 
 class UDT
@@ -226,7 +258,7 @@ def verify_challenge!
   if c.read_status != :withdraw
     raise "challenge inputs must be withdraw status"
   end
-  if c.read_start_withdraw_block_height + CHALLENGE_PERIOD < current_block_height
+  if tolerant_challenge_period(c.read_start_withdraw_block_height) < current_block_height
     raise "can't challenge withdraw, because challenge period is end"
   end
   withdraw_ptoken_count = c.read_token_count
@@ -276,7 +308,7 @@ def verify_withdraw!
   if c.read_status != :withdraw
     raise "withdraw inputs must be withdraw status"
   end
-  if c.read_start_withdraw_block_height + CHALLENGE_PERIOD >= current_block_height
+  if tolerant_challenge_period(c.read_start_withdraw_block_height) >= current_block_height
     raise "can't withdraw, because challenge period is not end"
   end
   withdraw_ptoken_count = c.read_token_count
