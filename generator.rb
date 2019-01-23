@@ -8,26 +8,33 @@ module Ckb
   end
 
   class PLASMATokenAccount
-    CONTRACT_SCRIPT = File.read(File.expand_path("./contract.rb", __FILE__))
+    CONTRACT_SCRIPT = File.read(File.expand_path("./contract.rb", File.dirname(__FILE__)))
     DEPOSIT_STATUS = 0
     WITHDRAW_STATUS = 1
 
-    attr_reader :api, :udt_type_hash, :udt_wallet, :pubkey
+    attr_reader :api, :udt_wallet
 
-    def initialize(api, udt_type_hash)
+    def initialize(api:, udt_wallet:)
       @api = api
-      @udt_type_hash = udt_type_hash
+      @udt_wallet = udt_wallet
+    end
+
+    def udt_type_hash
+      udt_wallet.contract_type_hash
+    end
+
+    def pubkey
+      udt_wallet.pubkey
     end
 
     def unlock_type_hash
-      Ckb::Utils.json_script_to_type_hash(udt_wallet, token_info.unlock_script_json_object(pubkey))
+      Ckb::Utils.json_script_to_type_hash(edt_wallet.token_info.unlock_script_json_object(pubkey))
     end
 
     def deposit(udt_amount,
                 output_plasma_account_capacity:,
                 output_udt_capacity:,
-                refund_udt_capacity:,
-                )
+                refund_udt_capacity:)
       generated_token = PLASMAToken.new(udt_amount, :deposit)
       # composit request
       inputs = gather_udt_inputs(udt_amount,
@@ -82,8 +89,7 @@ module Ckb
 
     def gather_udt_inputs(udt_amount,
                           refund_capacity:,
-                          reserve_capacity:,
-                         )
+                          reserve_capacity:)
       input_capacities = 0
       input_amounts = 0
       inputs = []
