@@ -28,7 +28,7 @@ module Ckb
     end
 
     def unlock_type_hash
-      Ckb::Utils.json_script_to_type_hash(edt_wallet.token_info.unlock_script_json_object(pubkey))
+      Ckb::Utils.json_script_to_type_hash(udt_wallet.token_info.unlock_script_json_object(pubkey))
     end
 
     def deposit(udt_amount,
@@ -106,7 +106,7 @@ module Ckb
         input_amounts += cell[:data].unpack("Q<")[0]
         break if input_amounts >= udt_amount
       end
-      raise "Not enough UDT amount!" if input_amounts < amount
+      raise "Not enough UDT amount!" if input_amounts < udt_amount
       need_capacities = if input_amounts > udt_amount
                           reserve_capacity + refund_capacity
                         else
@@ -131,13 +131,13 @@ module Ckb
     end
 
     def get_unspent_udt_cells
-      filter_unspent_cells do |cell|
+      filter_unspent_cells.select do |cell|
         cell[:lock] == unlock_type_hash && cell[:type] == udt_type_hash
       end
     end
 
     def get_unspent_cells
-      filter_unspent_cells do |cell|
+      filter_unspent_cells.select do |cell|
         cell[:lock] == unlock_type_hash && cell[:type].nil?
       end
     end
@@ -145,14 +145,15 @@ module Ckb
     def filter_unspent_cells(&blk)
       to = api.get_tip_number
       results = []
-      current_from = 1
       step = 100
-      ((to - 1) / step + 1).times do
-        current_to = [current_from + step, to].min
+      (to / step + 1).times do |i|
+        current_from = i * step
+        current_to = [current_from + step - 1, to].min
         cells = api.get_cells_by_type_hash(unlock_type_hash, current_from, current_to)
         cells = cells.select(&blk)
-        results += cells
+        results += cells.to_a
       end
+      results
     end
 
     def contract_script_json_object(status:)

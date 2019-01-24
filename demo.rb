@@ -2,6 +2,7 @@ api = Ckb::Api.new
 api.load_default_configuration!
 bob = Ckb::Wallet.from_hex(api, "e79f3207ea4980b7fed79956d5934249ceac4751a4fae01a0f7c4a96884bc4e3")
 
+asw = Ckb::AlwaysSuccessWallet.new(api)
 asw.send_capacity(bob.address, 100000)
 bob.get_balance
 
