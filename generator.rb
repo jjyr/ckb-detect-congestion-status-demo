@@ -1,3 +1,11 @@
+###
+# 1. 每个 Cell 都有 type 我理解是类似 schema 之类的, 
+# 但现在它在做两件事: 1. schema 检查 Cell 格式 2. 验证合约逻辑
+# 后者已经是 tx 层的事情(检查多个 inputs outputs 规则)，这里的概念设计有些不清晰
+#
+# 2. PLASMA 抵押/dispute 类操作会占用 lock，这样当抵押后用户就无法用更多样的形式去 unlock 了，
+# 这样是一个弊端无法做到解耦，比如用户 perfer multi-sig, 但这时只能靠 PLASMA 合约的设计者去支持
+
 module Ckb
   class PLASMAToken
     attr_reader :amount, :status, :capacity, :lock_hash
