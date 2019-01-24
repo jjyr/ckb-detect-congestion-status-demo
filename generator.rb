@@ -27,8 +27,12 @@ module Ckb
       udt_wallet.pubkey
     end
 
-    def unlock_type_hash
+    def udt_lock_hash
       Ckb::Utils.json_script_to_type_hash(udt_wallet.token_info.unlock_script_json_object(pubkey))
+    end
+
+    def ckb_address
+      udt_wallet.wallet.address
     end
 
     def deposit(udt_amount,
@@ -45,7 +49,7 @@ module Ckb
       outputs << {
         capacity: output_plasma_account_capacity,
         data: [udt_amount, DEPOSIT_STATUS].pack("Q<2"),
-        lock: unlock_type_hash,
+        lock: udt_lock_hash,
         type: contract_script_json_object(status: :deposit)
       }
       # deposited UDT account cell
@@ -131,26 +135,25 @@ module Ckb
     end
 
     def get_unspent_udt_cells
-      filter_unspent_cells.select do |cell|
-        cell[:lock] == unlock_type_hash && cell[:type] == udt_type_hash
-      end
+      filter_unspent_cells(udt_lock_hash)
     end
 
     def get_unspent_cells
-      filter_unspent_cells.select do |cell|
-        cell[:lock] == unlock_type_hash && cell[:type].nil?
-      end
+      filter_unspent_cells(ckb_address)
     end
 
-    def filter_unspent_cells(&blk)
+    def filter_unspent_cells(lock_hash)
       to = api.get_tip_number
       results = []
       step = 100
       (to / step + 1).times do |i|
         current_from = i * step
         current_to = [current_from + step - 1, to].min
-        cells = api.get_cells_by_type_hash(unlock_type_hash, current_from, current_to)
-        cells = cells.select(&blk)
+        cells = api.get_cells_by_type_hash(lock_hash, current_from, current_to)
+        cells.each do |cell|
+          tx = api.get_transaction(cell[:out_point][:hash])
+          cell.merge!(transaction: tx)
+        end
         results += cells.to_a
       end
       results
