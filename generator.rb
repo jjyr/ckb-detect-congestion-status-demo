@@ -27,6 +27,11 @@ module Ckb
       @udt_wallet = udt_wallet
     end
 
+    def contract_type_hash
+      #TODO
+      "0x"
+    end
+
     def udt_type_hash
       udt_wallet.contract_type_hash
     end
@@ -47,12 +52,12 @@ module Ckb
                 output_plasma_account_capacity:,
                 output_udt_capacity:,
                 refund_udt_capacity:)
-      generated_token = PLASMAToken.new(udt_amount, :deposit)
       # composit request
-      inputs = gather_udt_inputs(udt_amount,
+      gi = gather_udt_inputs(udt_amount,
                                  refund_capacity: refund_udt_capacity, 
                                  reserve_capacity: output_plasma_account_capacity + output_udt_capacity)
       outputs = []
+      refund_capacities = gi.capacities - output_plasma_account_capacity - output_udt_capacity
       # plasma account cell
       outputs << {
         capacity: output_plasma_account_capacity,
@@ -65,27 +70,37 @@ module Ckb
       outputs << {
         capacity: output_udt_capacity,
         data: [udt_amount].pack("Q<"),
-        lock: contract_type_hash,
+        lock: Ckb::Utils.json_script_to_type_hash(contract_script_json_object(status: :withdraw)),
         type: udt_wallet.token_info.contract_script_json_object
       }
-      if i.amounts > udt_amount
+      if gi.amounts > udt_amount
+        refund_capacities -= refund_udt_capacity
         # output udt refund
         outputs << {
-          capacity: refund_capacity,
-          data: [i.amounts - udt_amount].pack("Q<"),
+          capacity: refund_udt_capacity,
+          data: [gi.amounts - udt_amount].pack("Q<"),
           lock: udt_wallet.address,
           type: udt_wallet.token_info.contract_script_json_object
+        }
+      end
+      # refund capacities
+      if refund_capacities > 0
+        outputs << {
+          capacity: refund_capacities,
+          data: "",
+          lock: ckb_address,
+          type: "",
         }
       end
       tx = {
         version: 0,
         deps: [],
-        inputs: inputs,
+        inputs: gi.inputs,
         outputs: outputs
       }
       p "send", tx
       # send request
-      api.send_transaction(tx)
+      #api.send_transaction(tx)
     end
 
     def start_withdraw
@@ -115,7 +130,7 @@ module Ckb
         }
         inputs << input
         input_capacities += cell[:capacity]
-        input_amounts += cell[:data].unpack("Q<")[0]
+        input_amounts += cell[:output][:data].unpack("Q<")[0]
         break if input_amounts >= udt_amount
       end
       raise "Not enough UDT amount!" if input_amounts < udt_amount
@@ -160,7 +175,7 @@ module Ckb
         cells = api.get_cells_by_type_hash(lock_hash, current_from, current_to)
         cells.each do |cell|
           tx = api.get_transaction(cell[:out_point][:hash])
-          cell.merge!(transaction: tx)
+          cell.merge!(output: tx[:outputs][cell[:out_point][:index]])
         end
         results += cells.to_a
       end
