@@ -28,7 +28,7 @@ def token_status
 end
 
 # PLASMA token should be this type
-def contract_type_hash
+def contract_type_hash(status)
   $contract_type_hash ||= CKB.load_script_hash(0, CKB::Source::CURRENT, CKB::Category::TYPE)
 end
 
@@ -98,10 +98,6 @@ class PLASMAToken
     CKB.load_script_hash(i, CKB::Source::INPUT, CKB::Category::LOCK)
   end
 
-  def read_start_withdraw_block_height
-    @start_withdraw_block_height ||= CKB::CellField.new(@source, @index, CKB::CellField::DATA).read(16, 8).unpack("Q<")[0]
-  end
-
   def read_status
     @status ||= CKB::CellField.new(@source, @index, CKB::CellField::DATA).read(8, 8).unpack("Q<")[0]
     case @status
@@ -125,18 +121,15 @@ class PLASMAToken
   end
 end
 
-# **deposit** must following below verify conditions:
-# 1. outputs must be either UDT which type is equals to the udt_type_hash, or PLASMA token which type is equals to this contract.
-# 2. all inputs must have same type which equals to the udt_type_hash.
-# 3. all inputs must not have lock script references to the udt_type_hash.
-# 4. inputs UDT count must equals to outputs UDT count equals to outputs PLASMA token count.
-# 5. PLASMA token in outputs must be deposit status.
+# **deposit**
 #
 def verify_deposit!
   tx = CKB.load_tx
   # verify inputs
   # calculate udt count
   udt_count = 0
+  # 1. inputs must have same type which equals to the udt_type_hash.
+  # 2. inputs must not have lock script references to the contract_type_hash.
   tx["inputs"].size.times.each do |i|
     input_type_hash = CKB.load_script_hash(i, CKB::Source::INPUT, CKB::Category::TYPE)
     if input_type_hash != udt_type_hash
@@ -154,27 +147,28 @@ def verify_deposit!
   # calculate ptoken count
   ptoken_count = 0
   deposit_udt_count = 0
+  # 3. outputs must be either UDT which type is equals to the udt_type_hash, or PLASMA token which type is equals to this contract.
+  # 4. PLASMA token in outputs must be deposit status.
   tx["outputs"].size.times.each do |i|
     output_type_hash = CKB.load_script_hash(i, CKB::Source::OUTPUT, CKB::Category::TYPE)
     if output_type_hash == udt_type_hash
       output_lock_hash = CKB.load_script_hash(i, CKB::Source::OUTPUT, CKB::Category::LOCK)
-      if output_lock_hash != contract_type_hash
+      if output_lock_hash != contract_type_hash(:withdraw)
         raise "Output lock must equals to this contract"
       end
       udt_outputs << i
       deposit_udt_count += UDT.new(CKB::Source::OUTPUT, i).read_token_count
-    elsif output_type_hash == contract_type_hash
+    elsif output_type_hash == contract_type_hash(:deposit)
       c = PLASMAToken.new(CKB::Source::INPUT, i)
       if c.read_status != :deposit
         raise "deposit outputs must be deposit status"
       end
       ptoken_outputs << i
       ptoken_count += PLASMAToken.new(CKB::Source::OUTPUT, i).read_token_count
-    else
-      raise "Output type must be equals to udt or this contract"
     end
   end
 
+  # 5. inputs UDT count must equals to outputs UDT count equals to outputs PLASMA token count.
   if udt_count != ptoken_count
     raise "Must produce same count plasma token"
   end
@@ -186,51 +180,52 @@ def verify_deposit!
 end
 
 # **start withdraw**
-# 1. type of inputs tokens and outputs tokens must equals to this contract.
-# 2. all inputs tokens is under deposit status, all outputs tokens is under withdraw status.
-# 3. start_withdraw_at_block of outputs PLASMA token must be greater than parent block number
 #
 def verify_start_withdraw!
   tx = CKB.load_tx
   # verify inputs
   # calculate udt count
-  withdraw_ptoken_count = 0
+  input_ptoken_count = 0
+  # inputs: must be plasma token
   tx["inputs"].size.times.each do |i|
     c = PLASMAToken.new(CKB::Source::INPUT, i)
-    if c.read_type_hash != contract_type_hash
+    if c.read_type_hash != contract_type_hash(:deposit)
       raise "Inputs type must equals to contract_type_hash"
     end
     if c.read_status != :deposit
       raise "withdraw inputs must be deposit status"
     end
-    withdraw_ptoken_count += c.read_token_count
-  end
-  # verify outputs
-  # calculate ptoken count
-  if tx["outputs"].size != 1
-    raise "only support 1 outputs for now"
-  end
-  output_withdraw_ptoken_count = 0
-  tx["outputs"].size.times.each do |i|
-    c = PLASMAToken.new(CKB::Source::OUTPUT, i)
-    if c.read_type_hash != contract_type_hash
-      raise "Outputs type must equals to contract_type_hash"
-    end
-    if c.read_status != :withdraw
-      raise "withdraw outputs must be withdraw status"
-    end
-    # make sure lock_hash equals to this contract, so challenger can claim money
-    if c.read_lock_hash != contract_type_hash
-      raise "Output lock must equals to this contract"
-    end
-    if c.read_start_withdraw_block_height < current_block_height
-      raise "start_withdraw_block_height must great or equal than current block height"
-    end
-    output_withdraw_ptoken_count += c.read_token_count
+    input_ptoken_count += c.read_token_count
   end
 
-  if withdraw_ptoken_count != output_withdraw_ptoken_count
+  # verify outputs
+  output_withdraw_ptoken_count = 0
+  output_refund_ptoken_count = 0
+  # output: 
+  # 1. must be withdraw plasma token
+  # 2. must locked by this contract
+  # 3. start_withdraw_block_height == tx.valid_until
+  tx["outputs"].size.times.each do |i|
+    c = PLASMAToken.new(CKB::Source::OUTPUT, i)
+    if c.read_type_hash != contract_type_hash(:withdraw)
+      raise "Outputs type must equals to contract_type_hash"
+    end
+    if c.read_status == :withdraw
+      output_withdraw_ptoken_count += c.read_token_count
+    else
+      output_refund_ptoken_count += c.read_token_count
+    end
+    # make sure lock_hash equals to this contract, so challenger can claim money
+    if c.read_lock_hash != contract_type_hash(:withdraw)
+      raise "Output lock must equals to this contract"
+    end
+  end
+
+  if input_ptoken_count != (output_withdraw_ptoken_count + output_refund_ptoken_count)
     raise "Output withdraw token must equals input"
+  end
+  if output_withdraw_ptoken_count == 0
+    raise "Must have non-zero withdraw token"
   end
   true
 end
@@ -250,7 +245,8 @@ end
 def verify_challenge!
   tx = CKB.load_tx
   # verify inputs
-  # calculate udt count
+  # 1. input should be withdraw plasma token
+  # 2. ARGV[2] should be a proof to challenge withdraw token
   if tx["inputs"].size != 1
     raise "challenge inputs size must be 1"
   end
@@ -261,15 +257,12 @@ def verify_challenge!
   if c.read_status != :withdraw
     raise "challenge inputs must be withdraw status"
   end
-  if tolerant_challenge_period(c.read_start_withdraw_block_height) < current_block_height
-    raise "can't challenge withdraw, because challenge period is end"
-  end
   withdraw_ptoken_count = c.read_token_count
   if !c.verify_proof(ARGV[2])
     raise "error proof, challenge failed"
   end
   # verify outputs
-  # calculate ptoken count
+  # 1. should be a withdraw plasma token
   if tx["outputs"].size != 1
     raise "only support 1 outputs for now"
   end
@@ -279,9 +272,6 @@ def verify_challenge!
   end
   if c.read_status != :withdraw
     raise "withdraw outputs must be withdraw status"
-  end
-  if c.read_start_withdraw_block_height < current_block_height
-    raise "start_withdraw_block_height must great or equal than current block height"
   end
   output_withdraw_ptoken_count = c.read_token_count
 
@@ -294,13 +284,13 @@ end
 # **withdraw**
 # Need 2 inputs: plasma_token, deposited_UDT
 # Need 1 extra ARGV: withdraw signature
-# 1. first input must be UDT which lock script references to this contract.
-# 2. other inputs must be PLASMA token(issued from this contract) which status is withdraw and challenge_period is end, and sum of token should equals to first input UDT.
 # 3. all outputs must be UDT token which sum of UDT equals to first input UDT.
 #
 def verify_withdraw!
   tx = CKB.load_tx
   # verify inputs
+  # 1. first input must be withdarw plasma token
+  # 2. second input must be UDT which lock script references to this contract.
   if tx["inputs"].size != 2
     raise "challenge inputs size must be 2"
   end
@@ -311,10 +301,13 @@ def verify_withdraw!
   if c.read_status != :withdraw
     raise "withdraw inputs must be withdraw status"
   end
-  if tolerant_challenge_period(c.read_start_withdraw_block_height) >= current_block_height
+  # 3. verify that challenge period is ended
+  start_withdraw_block_height = CKB.load_block(tx["inputs"][0]["block_hash"])["height"]
+  if start_withdraw_block_height + CHALLENGE_PERIOD >= tx["valid_since"]
     raise "can't withdraw, because challenge period is not end"
   end
   withdraw_ptoken_count = c.read_token_count
+  # 4. verify signature to proof token ownership
   if !c.verify_signature(ARGV[2])
     raise "error signature, withdraw failed"
   end
@@ -329,8 +322,18 @@ def verify_withdraw!
   if withdraw_ptoken_count != withdraw_udt_count
     raise "PLASMAToken count must equals to UDT count"
   end
+  # 5. verify chain congestion
+  available_blocks = 0
+  tx["block_deps"].each do |block_hash|
+    block = Ckb.load_tx(block_hash)
+    if block["height"] > start_withdraw_block_height && block["txs_cycles"] * 100 / BLOCK_MAX_CYCLES < 95
+      available_blocks += 1
+    end
+  end
+  if available_blocks < 50
+    raise "must provide 50 blocks to proof chain congestion status"
+  end
   # verify outputs
-  # calculate ptoken count
   if tx["outputs"].size != 1
     raise "only support 1 outputs for now"
   end
@@ -340,6 +343,7 @@ def verify_withdraw!
   end
   output_udt_count = c.read_token_count
 
+  # withdraw token count is correct
   if withdraw_udt_count != output_udt_count
     raise "withdraw UDT must equals to input"
   end
